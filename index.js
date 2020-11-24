@@ -11,82 +11,103 @@ app.post("/api/search", function (req, res) {
     let results = {
       status: "",
       package: "",
+      link: "",
     };
-    const query = "https://maps.google.com?q=" + req.body.queryText;
+
     const browser = await puppeteer.launch({
       headless: true,
       args: ["--disabled-setuid-sandbox", "--no-sandbox"],
     });
     const page = await browser.newPage();
+    //Funckja co wyciągnia strigów z elementów bez errorów
+
     try {
-      await page.goto(query);
+      //przechodzimy pod podany link
+      console.log(req.body.queryText);
+      await page.goto(req.body.queryText);
       await page.waitForNavigation();
-
+      //sprawdzanie czy link jest prawidłowy
       const errPage = await page.$("div.section-bad-query-title");
+      //sprawdzanie czy jest to lista wyników
+      const selectPage = await page.$("div.section-result-content");
+      //sprawdzamy czy zapytanie jest poprawne
+
       if (errPage === null) {
-        const getInfo = await page.evaluate(() => {
-          const select = (element) =>
-            document.querySelector(element)
-              ? document.querySelector(element).textContent
-              : "brak danych";
+        //sprawdzamy czy wyświetla wyniki czy wizytówkę
+        if (selectPage === null) {
+          const getInfo = await page.evaluate(() => {
+            const select = (element) =>
+              document.querySelector(element)
+                ? document.querySelector(element).textContent
+                : "brak danych";
+            const sections = {
+              title: "h1.section-hero-header-title-title",
+              type: 'button[jsaction="pane.rating.category"]',
+              adres: 'button[data-tooltip="Kopiuj adres"]',
+              phone: 'button[data-tooltip="Kopiuj numer telefonu"]',
+              revSum:
+                'button.widget-pane-link[jsaction="pane.rating.moreReviews"]',
+              average: "span.section-star-display",
+            };
 
-          const sections = {
-            title: "h1.section-hero-header-title-title",
-            type: 'button[jsaction="pane.rating.category"]',
-            adres: 'button[data-tooltip="Kopiuj adres"]',
-            webSite: 'button[data-tooltip="Otwórz witrynę"]',
-            phone: 'button[data-tooltip="Kopiuj numer telefonu"]',
-            revSum:
-              'button.widget-pane-link[jsaction="pane.rating.moreReviews"]',
-          };
+            let initalInfo = [
+              {
+                title: select(sections.title),
+                type: select(sections.type),
+                localization: select(sections.adres),
+                phone: select(sections.phone),
+                revSum: select(sections.revSum),
+                average: select(sections.average),
+              },
+            ];
 
-          let initalInfo = {
-            tile: select(sections.title),
-            type: select(sections.type),
-            adres: select(sections.adres),
-            webSite: select(sections.webSite),
-            phone: select(sections.phone),
-            revSum: select(sections.revSum),
-            average: "",
-            g1: "",
-            g2: "",
-            g3: "",
-            g4: "",
-            g5: "",
-          };
-          if (initalInfo.revSum !== "brak danych") {
-            document.querySelector(sections.revSum).click();
+            return initalInfo;
+          });
 
-            setTimeout(() => {}, 100);
-            const reviewsScore = Array.from(
-              document.querySelectorAll('tr[role="image"]')
+          results.package = getInfo;
+          results.status = "ok";
+
+          //Kiedy po wpisaniu za pomocą adresu wyskakuje parę wyników
+        } else {
+          const getResults = await page.evaluate(() => {
+            const items = Array.from(
+              document.querySelectorAll("div.section-result-text-content")
             );
-            initalInfo.average = document.querySelector(
-              "div.gm2-display-2"
-            ).textContent;
-            reviewsScore.map(
-              (item, index) =>
-                (initalInfo[`g${index + 1}`] = item.getAttribute("aria-label"))
-            );
-          } else {
-            initalInfo.g1 = "brak opinii";
-            initalInfo.g2 = "brak opinii";
-            initalInfo.g3 = "brak opinii";
-            initalInfo.g4 = "brak opinii";
-            initalInfo.g5 = "brak opinii";
-            initalInfo.average = "brak opinii";
-          }
-          return initalInfo;
-        });
-
-        results.package = getInfo;
-        results.status = "ok";
+            function getText(item, element) {
+              return item.querySelector(element)
+                ? item.querySelector(element).textContent === ""
+                  ? "Brak danych"
+                  : item.querySelector(element).textContent
+                : "Brak danych";
+            }
+            let select = [];
+            for (let i = 0; i < items.length; i++) {
+              select.push({
+                title: getText(items[i], "h3"),
+                localization: getText(items[i], "span.section-result-location"),
+                type: getText(items[i], "span.section-result-details"),
+                average: getText(items[i], "span.cards-rating-score"),
+                revSum: getText(items[i], "span.section-result-num-ratings"),
+                phone: getText(
+                  items[i],
+                  "span.section-result-info.section-result-phone-number"
+                ),
+              });
+            }
+            return select;
+          });
+          results.status = "select";
+          results.package = getResults;
+        }
       } else {
-        results.status = "no";
+        results.status = "notFound";
       }
     } catch (err) {
       results.status = "err";
+      results.package = err;
+      console.log(err);
     } finally {
+      results.status === "ok" ? (results.link = page.url()) : "Brak danych";
       await browser.close();
       res.json(results);
     }
